@@ -1,0 +1,15 @@
+package com.hospital.transfer.enums;
+
+public enum TransferStatus {
+    PENDING,
+    NO_BED_AVAILABLE,
+    BED_ASSIGNED,
+    ISOLATION_REQUIRED,
+    CRITICAL_PRIORITY,
+    FAMILY_REFUSED,
+    PATIENT_STATUS_CHANGED,
+    OCCUPIED,
+    ADMISSION_CONFIRMED,
+    TIMEOUT_RELEASED,
+    CANCELLED
+}

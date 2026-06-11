@@ -1,0 +1,12 @@
+services:
+  hospital-bed-transfer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: hospital-bed-transfer-service
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_PROFILES_ACTIVE=default
+      - TZ=Asia/Shanghai
+    restart: unless-stopped
