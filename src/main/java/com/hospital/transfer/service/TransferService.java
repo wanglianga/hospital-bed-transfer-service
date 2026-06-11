@@ -102,32 +102,47 @@ public class TransferService {
                 application.getIsolationRequirement()
         );
 
+        if (application.getIsolationRequirement() != IsolationType.NONE) {
+            if (bestBed == null) {
+                application.setStatus(TransferStatus.ISOLATION_REQUIRED);
+                application.setRemark("需要 " + application.getIsolationRequirement() + " 隔离床位，目标科室暂无匹配隔离床位，等待安排");
+                application.setAssignedBedId(null);
+                application.setAssignedBedNumber(null);
+                transferRepository.save(application);
+                log.warn("转科申请 {} 需要隔离 {}，但目标科室 {} 无匹配隔离床位，保持待安排状态",
+                        application.getId(), application.getIsolationRequirement(), application.getTargetDepartment());
+                return toResponse(application);
+            }
+            if (bestBed.getIsolationType() != application.getIsolationRequirement()) {
+                application.setStatus(TransferStatus.ISOLATION_REQUIRED);
+                application.setRemark("需要 " + application.getIsolationRequirement() + " 隔离床位，已分配床位隔离类型为 "
+                        + bestBed.getIsolationType() + "，不匹配，拒绝分配");
+                application.setAssignedBedId(null);
+                application.setAssignedBedNumber(null);
+                transferRepository.save(application);
+                log.warn("转科申请 {} 隔离类型不匹配，要求: {}，候选床位: {}({})，拒绝分配",
+                        application.getId(), application.getIsolationRequirement(),
+                        bestBed.getBedNumber(), bestBed.getIsolationType());
+                return toResponse(application);
+            }
+            log.info("转科申请 {} 隔离床匹配成功: {}({})", application.getId(), bestBed.getBedNumber(), bestBed.getIsolationType());
+        }
+
         if (bestBed == null) {
             application.setStatus(TransferStatus.NO_BED_AVAILABLE);
             application.setRemark("目标科室无可用床位");
+            application.setAssignedBedId(null);
+            application.setAssignedBedNumber(null);
             transferRepository.save(application);
             log.warn("转科申请 {} 无可用床位，目标科室: {}", application.getId(), application.getTargetDepartment());
             return toResponse(application);
         }
 
-        if (application.getIsolationRequirement() != IsolationType.NONE
-                && bestBed.getIsolationType() != application.getIsolationRequirement()) {
-            application.setStatus(TransferStatus.ISOLATION_REQUIRED);
-            application.setRemark("需要隔离床位但无匹配隔离类型，已分配最接近床位");
-            log.info("转科申请 {} 需要隔离，要求: {}，实际床位隔离类型: {}",
-                    application.getId(), application.getIsolationRequirement(), bestBed.getIsolationType());
-        }
-
         if (application.getPriorityLevel() == PriorityLevel.EMERGENCY
                 || application.getPriorityLevel() == PriorityLevel.URGENT) {
-            if (application.getStatus() != TransferStatus.ISOLATION_REQUIRED) {
-                application.setStatus(TransferStatus.CRITICAL_PRIORITY);
-            }
+            application.setStatus(TransferStatus.CRITICAL_PRIORITY);
             log.info("转科申请 {} 为重症优先，优先级: {}", application.getId(), application.getPriorityLevel());
-        }
-
-        if (application.getStatus() == TransferStatus.PENDING
-                || application.getStatus() == TransferStatus.NO_BED_AVAILABLE) {
+        } else {
             application.setStatus(TransferStatus.BED_ASSIGNED);
         }
 
@@ -143,8 +158,8 @@ public class TransferService {
         }
 
         TransferApplication saved = transferRepository.save(application);
-        log.info("转科申请 {} 已分配床位: {}，占床截止时间: {}",
-                saved.getId(), bestBed.getBedNumber(), saved.getOccupationDeadline());
+        log.info("转科申请 {} 已分配床位: {}，状态: {}，占床截止时间: {}",
+                saved.getId(), bestBed.getBedNumber(), saved.getStatus(), saved.getOccupationDeadline());
 
         createFamilyNotification(saved);
 
@@ -329,9 +344,9 @@ public class TransferService {
 
     @Transactional
     public void retryPendingTransfers() {
-        List<TransferApplication> noBedApplications = transferRepository
-                .findByStatus(TransferStatus.NO_BED_AVAILABLE);
-        for (TransferApplication app : noBedApplications) {
+        List<TransferApplication> pendingApplications = transferRepository
+                .findByStatusIn(List.of(TransferStatus.NO_BED_AVAILABLE, TransferStatus.ISOLATION_REQUIRED));
+        for (TransferApplication app : pendingApplications) {
             attemptAssignBed(app);
         }
     }

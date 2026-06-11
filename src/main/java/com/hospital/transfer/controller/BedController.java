@@ -64,12 +64,26 @@ public class BedController {
 
     @GetMapping("/count/available")
     public ApiResponse<Long> countAvailableBeds(
-            @RequestParam String department,
-            @RequestParam(required = false) BedType bedType) {
-        if (bedType != null) {
+            @RequestParam(required = false) String department,
+            @RequestParam(required = false) BedType bedType,
+            @RequestParam(required = false) IsolationType isolationType) {
+
+        if (department != null && bedType != null) {
             return ApiResponse.success(bedService.countAvailableBedsByType(department, bedType));
         }
-        return ApiResponse.success(bedService.countAvailableBeds(department));
+        if (department != null && isolationType != null) {
+            return ApiResponse.success(bedService.countAvailableBedsByIsolation(department, isolationType));
+        }
+        if (department != null) {
+            return ApiResponse.success(bedService.countAvailableBeds(department));
+        }
+        if (bedType != null) {
+            return ApiResponse.success(bedService.countAvailableBedsOnlyByType(bedType));
+        }
+        if (isolationType != null) {
+            return ApiResponse.success(bedService.countAvailableBedsOnlyByIsolation(isolationType));
+        }
+        return ApiResponse.success(bedService.countAllAvailableBeds());
     }
 
     private BedQueryResponse toQueryResponse(Bed bed) {

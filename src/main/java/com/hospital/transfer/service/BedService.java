@@ -87,6 +87,22 @@ public class BedService {
         return bedRepository.countByDepartmentAndBedTypeAndOccupiedFalseAndEnabledTrue(department, bedType);
     }
 
+    public long countAllAvailableBeds() {
+        return bedRepository.countByOccupiedFalseAndEnabledTrue();
+    }
+
+    public long countAvailableBedsByIsolation(String department, IsolationType isolationType) {
+        return bedRepository.countByDepartmentAndIsolationTypeAndOccupiedFalseAndEnabledTrue(department, isolationType);
+    }
+
+    public long countAvailableBedsOnlyByType(BedType bedType) {
+        return bedRepository.countByBedTypeAndOccupiedFalseAndEnabledTrue(bedType);
+    }
+
+    public long countAvailableBedsOnlyByIsolation(IsolationType isolationType) {
+        return bedRepository.countByIsolationTypeAndOccupiedFalseAndEnabledTrue(isolationType);
+    }
+
     @Transactional
     public Bed occupyBed(Long bedId, String admissionNumber, Long transferApplicationId) {
         Bed bed = bedRepository.findById(bedId)
@@ -128,20 +144,32 @@ public class BedService {
         if (isolationType != IsolationType.NONE) {
             candidates = bedRepository.findByDepartmentAndIsolationTypeAndOccupiedFalseAndEnabledTrue(department, isolationType);
             if (!candidates.isEmpty()) {
+                for (Bed bed : candidates) {
+                    if (bed.getBedType() == bedType) {
+                        return bed;
+                    }
+                }
                 return candidates.get(0);
             }
-            candidates = bedRepository.findByDepartmentAndBedTypeAndOccupiedFalseAndEnabledTrue(department, bedType);
-            if (!candidates.isEmpty()) {
-                return candidates.get(0);
-            }
+            log.warn("目标科室 {} 未找到匹配隔离类型 {} 的床位", department, isolationType);
+            return null;
         } else {
             candidates = bedRepository.findByDepartmentAndBedTypeAndOccupiedFalseAndEnabledTrue(department, bedType);
             if (!candidates.isEmpty()) {
-                return candidates.get(0);
+                for (Bed bed : candidates) {
+                    if (bed.getIsolationType() == IsolationType.NONE) {
+                        return bed;
+                    }
+                }
             }
         }
         candidates = bedRepository.findByDepartmentAndOccupiedFalseAndEnabledTrue(department);
-        return candidates.isEmpty() ? null : candidates.get(0);
+        for (Bed bed : candidates) {
+            if (bed.getIsolationType() == IsolationType.NONE) {
+                return bed;
+            }
+        }
+        return candidates.isEmpty() ? null : null;
     }
 
     private BedQueryResponse toQueryResponse(Bed bed) {
