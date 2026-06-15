@@ -1,5 +1,7 @@
 package com.hospital.transfer.service;
 
+import com.hospital.transfer.dto.IsolationRestriction;
+import com.hospital.transfer.dto.PriorityScoreDetail;
 import com.hospital.transfer.dto.TransferRequest;
 import com.hospital.transfer.dto.TransferResponse;
 import com.hospital.transfer.entity.Bed;
@@ -16,7 +18,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -67,9 +71,17 @@ public class TransferService {
             throw new BusinessException("该患者已有进行中的转科申请");
         }
 
-        int priorityScore = calculatePriorityScore(patient, request);
-
+        List<PriorityScoreDetail> priorityDetails = calculatePriorityScoreWithDetails(patient, request);
+        int priorityScore = priorityDetails.stream().mapToInt(PriorityScoreDetail::getScore).sum();
         PriorityLevel priorityLevel = determinePriorityLevel(priorityScore);
+
+        IsolationRestriction isolationRestriction = bedService.checkIsolationRestriction(
+                request.getTargetDepartment(),
+                request.getRequiredBedType(),
+                request.getIsolationRequirement(),
+                request.getDiagnosis() != null ? request.getDiagnosis() : patient.getDiagnosis(),
+                request.getReason()
+        );
 
         TransferApplication application = TransferApplication.builder()
                 .patientAdmissionNumber(request.getPatientAdmissionNumber())
@@ -91,51 +103,110 @@ public class TransferService {
         log.info("转科申请已创建，申请ID: {}，患者住院号: {}，优先级: {}，评分: {}",
                 saved.getId(), request.getPatientAdmissionNumber(), priorityLevel, priorityScore);
 
-        return attemptAssignBed(saved);
+        TransferResponse response = attemptAssignBed(saved);
+        response.setPriorityScoreDetails(priorityDetails);
+        response.setIsolationRestriction(isolationRestriction);
+
+        QueueInfo queueInfo = calculateQueuePosition(saved);
+        response.setQueuePosition(queueInfo.position);
+        response.setTotalWaiting(queueInfo.totalWaiting);
+
+        return response;
+    }
+
+    private static class QueueInfo {
+        int position;
+        int totalWaiting;
+
+        QueueInfo(int position, int totalWaiting) {
+            this.position = position;
+            this.totalWaiting = totalWaiting;
+        }
+    }
+
+    private QueueInfo calculateQueuePosition(TransferApplication application) {
+        List<TransferStatus> pendingStatuses = List.of(
+                TransferStatus.PENDING,
+                TransferStatus.NO_BED_AVAILABLE,
+                TransferStatus.BED_ASSIGNED,
+                TransferStatus.ISOLATION_REQUIRED,
+                TransferStatus.CRITICAL_PRIORITY,
+                TransferStatus.OCCUPIED
+        );
+        List<TransferApplication> allPending = transferRepository
+                .findByStatusInOrderByPriorityScoreDesc(pendingStatuses);
+
+        int position = 0;
+        for (int i = 0; i < allPending.size(); i++) {
+            if (allPending.get(i).getId().equals(application.getId())) {
+                position = i + 1;
+                break;
+            }
+        }
+        if (position == 0) {
+            position = allPending.size() + 1;
+        }
+        return new QueueInfo(position, allPending.size());
     }
 
     @Transactional
     public TransferResponse attemptAssignBed(TransferApplication application) {
+        IsolationRestriction isolationRestriction = bedService.checkIsolationRestriction(
+                application.getTargetDepartment(),
+                application.getRequiredBedType(),
+                application.getIsolationRequirement(),
+                application.getDiagnosis(),
+                application.getReason()
+        );
+
+        if (isolationRestriction != null) {
+            application.setStatus(TransferStatus.ISOLATION_REQUIRED);
+            application.setRemark(isolationRestriction.getMessage());
+            application.setAssignedBedId(null);
+            application.setAssignedBedNumber(null);
+            transferRepository.save(application);
+            log.warn("转科申请 {} 隔离限制: {} - {}", application.getId(),
+                    isolationRestriction.getRestrictionType(), isolationRestriction.getMessage());
+            TransferResponse response = toResponse(application);
+            response.setIsolationRestriction(isolationRestriction);
+            return response;
+        }
+
         Bed bestBed = bedService.findBestMatchBed(
                 application.getTargetDepartment(),
                 application.getRequiredBedType(),
                 application.getIsolationRequirement()
         );
 
-        if (application.getIsolationRequirement() != IsolationType.NONE) {
-            if (bestBed == null) {
-                application.setStatus(TransferStatus.ISOLATION_REQUIRED);
-                application.setRemark("需要 " + application.getIsolationRequirement() + " 隔离床位，目标科室暂无匹配隔离床位，等待安排");
-                application.setAssignedBedId(null);
-                application.setAssignedBedNumber(null);
-                transferRepository.save(application);
-                log.warn("转科申请 {} 需要隔离 {}，但目标科室 {} 无匹配隔离床位，保持待安排状态",
-                        application.getId(), application.getIsolationRequirement(), application.getTargetDepartment());
-                return toResponse(application);
-            }
-            if (bestBed.getIsolationType() != application.getIsolationRequirement()) {
-                application.setStatus(TransferStatus.ISOLATION_REQUIRED);
-                application.setRemark("需要 " + application.getIsolationRequirement() + " 隔离床位，已分配床位隔离类型为 "
-                        + bestBed.getIsolationType() + "，不匹配，拒绝分配");
-                application.setAssignedBedId(null);
-                application.setAssignedBedNumber(null);
-                transferRepository.save(application);
-                log.warn("转科申请 {} 隔离类型不匹配，要求: {}，候选床位: {}({})，拒绝分配",
-                        application.getId(), application.getIsolationRequirement(),
-                        bestBed.getBedNumber(), bestBed.getIsolationType());
-                return toResponse(application);
-            }
-            log.info("转科申请 {} 隔离床匹配成功: {}({})", application.getId(), bestBed.getBedNumber(), bestBed.getIsolationType());
-        }
-
         if (bestBed == null) {
-            application.setStatus(TransferStatus.NO_BED_AVAILABLE);
-            application.setRemark("目标科室无可用床位");
-            application.setAssignedBedId(null);
-            application.setAssignedBedNumber(null);
-            transferRepository.save(application);
-            log.warn("转科申请 {} 无可用床位，目标科室: {}", application.getId(), application.getTargetDepartment());
-            return toResponse(application);
+            boolean isCritical = application.getPriorityLevel() == PriorityLevel.EMERGENCY
+                    || application.getPriorityLevel() == PriorityLevel.URGENT;
+
+            if (isCritical) {
+                Bed preemptedBed = attemptPreemptBed(application);
+                if (preemptedBed != null) {
+                    bestBed = preemptedBed;
+                    application.setStatus(TransferStatus.CRITICAL_PRIORITY);
+                    application.setRemark("重症患者插队，已抢占床位 " + preemptedBed.getBedNumber());
+                    log.info("转科申请 {} 为重症患者，成功抢占床位 {}", application.getId(), preemptedBed.getBedNumber());
+                } else {
+                    application.setStatus(TransferStatus.NO_BED_AVAILABLE);
+                    application.setRemark("目标科室无可用床位，且无可抢占的低优先级床位，重症患者正在排队中");
+                    application.setAssignedBedId(null);
+                    application.setAssignedBedNumber(null);
+                    transferRepository.save(application);
+                    log.warn("转科申请 {} 为重症患者，但无可抢占床位", application.getId());
+                    return toResponse(application);
+                }
+            } else {
+                application.setStatus(TransferStatus.NO_BED_AVAILABLE);
+                application.setRemark("目标科室无可用床位");
+                application.setAssignedBedId(null);
+                application.setAssignedBedNumber(null);
+                transferRepository.save(application);
+                log.warn("转科申请 {} 无可用床位，目标科室: {}", application.getId(), application.getTargetDepartment());
+                return toResponse(application);
+            }
         }
 
         if (application.getPriorityLevel() == PriorityLevel.EMERGENCY
@@ -166,6 +237,64 @@ public class TransferService {
         return toResponse(saved);
     }
 
+    private Bed attemptPreemptBed(TransferApplication criticalApplication) {
+        List<TransferApplication> lowerPriorityAssignments = transferRepository
+                .findByTargetDepartmentAndStatus(
+                        criticalApplication.getTargetDepartment(),
+                        TransferStatus.BED_ASSIGNED
+                ).stream()
+                .filter(app -> {
+                    PriorityLevel appLevel = app.getPriorityLevel();
+                    PriorityLevel criticalLevel = criticalApplication.getPriorityLevel();
+                    return (criticalLevel == PriorityLevel.EMERGENCY
+                            && (appLevel == PriorityLevel.NORMAL || appLevel == PriorityLevel.LOW))
+                            || (criticalLevel == PriorityLevel.URGENT && appLevel == PriorityLevel.LOW);
+                })
+                .sorted((a, b) -> {
+                    int scoreCompare = Integer.compare(a.getPriorityScore(), b.getPriorityScore());
+                    if (scoreCompare != 0) return scoreCompare;
+                    return a.getApplicationTime().compareTo(b.getApplicationTime());
+                })
+                .collect(Collectors.toList());
+
+        for (TransferApplication lowerApp : lowerPriorityAssignments) {
+            if (lowerApp.getAssignedBedId() != null) {
+                Bed bedToPreempt = bedService.getBed(lowerApp.getAssignedBedId());
+
+                if (criticalApplication.getIsolationRequirement() != IsolationType.NONE) {
+                    if (bedToPreempt.getIsolationType() != criticalApplication.getIsolationRequirement()) {
+                        continue;
+                    }
+                } else {
+                    if (bedToPreempt.getIsolationType() != IsolationType.NONE) {
+                        continue;
+                    }
+                }
+
+                if (bedToPreempt.getBedType() != criticalApplication.getRequiredBedType()
+                        && criticalApplication.getRequiredBedType() != BedType.GENERAL) {
+                    continue;
+                }
+
+                bedService.releaseBed(lowerApp.getAssignedBedId());
+
+                lowerApp.setStatus(TransferStatus.NO_BED_AVAILABLE);
+                lowerApp.setAssignedBedId(null);
+                lowerApp.setAssignedBedNumber(null);
+                lowerApp.setOccupationDeadline(null);
+                lowerApp.setRemark("床位被重症患者 " + criticalApplication.getPatientAdmissionNumber() + " 抢占，重新排队");
+                transferRepository.save(lowerApp);
+
+                log.info("重症患者抢占床位成功: 申请ID {} 抢占了申请ID {} 的床位 {}",
+                        criticalApplication.getId(), lowerApp.getId(), bedToPreempt.getBedNumber());
+
+                return bedToPreempt;
+            }
+        }
+
+        return null;
+    }
+
     private void createFamilyNotification(TransferApplication application) {
         FamilyNotification notification = FamilyNotification.builder()
                 .transferApplicationId(application.getId())
@@ -184,33 +313,112 @@ public class TransferService {
     }
 
     public int calculatePriorityScore(Patient patient, TransferRequest request) {
-        int score = 0;
+        return calculatePriorityScoreWithDetails(patient, request).stream()
+                .mapToInt(PriorityScoreDetail::getScore)
+                .sum();
+    }
 
+    public List<PriorityScoreDetail> calculatePriorityScoreWithDetails(Patient patient, TransferRequest request) {
+        List<PriorityScoreDetail> details = new ArrayList<>();
+
+        int statusScore = 0;
+        String statusDesc = "";
         switch (patient.getStatus()) {
-            case CRITICAL: score += 40; break;
-            case POSTOPERATIVE: score += 20; break;
-            case STABLE: score += 10; break;
-            case DISCHARGING: score += 5; break;
-            default: break;
+            case CRITICAL:
+                statusScore = 40;
+                statusDesc = "患者病情危重";
+                break;
+            case POSTOPERATIVE:
+                statusScore = 20;
+                statusDesc = "患者术后恢复期";
+                break;
+            case STABLE:
+                statusScore = 10;
+                statusDesc = "患者病情稳定";
+                break;
+            case DISCHARGING:
+                statusScore = 5;
+                statusDesc = "患者即将出院";
+                break;
+            default:
+                break;
+        }
+        if (statusScore > 0) {
+            details.add(PriorityScoreDetail.builder()
+                    .factor("PATIENT_STATUS")
+                    .score(statusScore)
+                    .description(statusDesc)
+                    .build());
         }
 
+        int nursingScore = 0;
+        String nursingDesc = "";
         switch (request.getNursingLevel()) {
-            case SPECIAL: score += 30; break;
-            case LEVEL1: score += 25; break;
-            case LEVEL2: score += 15; break;
-            case LEVEL3: score += 5; break;
+            case SPECIAL:
+                nursingScore = 30;
+                nursingDesc = "特级护理";
+                break;
+            case LEVEL1:
+                nursingScore = 25;
+                nursingDesc = "一级护理";
+                break;
+            case LEVEL2:
+                nursingScore = 15;
+                nursingDesc = "二级护理";
+                break;
+            case LEVEL3:
+                nursingScore = 5;
+                nursingDesc = "三级护理";
+                break;
         }
+        details.add(PriorityScoreDetail.builder()
+                .factor("NURSING_LEVEL")
+                .score(nursingScore)
+                .description(nursingDesc)
+                .build());
 
         if (request.getIsolationRequirement() != IsolationType.NONE) {
-            score += 15;
+            details.add(PriorityScoreDetail.builder()
+                    .factor("ISOLATION_REQUIRED")
+                    .score(15)
+                    .description("需要" + request.getIsolationRequirement() + "隔离")
+                    .build());
         }
 
         if (request.getRequiredBedType() == BedType.ICU
                 || request.getRequiredBedType() == BedType.RESCUE) {
-            score += 20;
+            details.add(PriorityScoreDetail.builder()
+                    .factor("BED_TYPE_CRITICAL")
+                    .score(20)
+                    .description("需要" + request.getRequiredBedType() + "床位")
+                    .build());
         }
 
-        return score;
+        if (request.getAppointmentTime() != null) {
+            long hoursSinceApplication = Duration.between(request.getAppointmentTime(), LocalDateTime.now()).toHours();
+            if (hoursSinceApplication > 2) {
+                int timeScore = Math.min((int) (hoursSinceApplication / 2), 10);
+                details.add(PriorityScoreDetail.builder()
+                        .factor("WAITING_TIME")
+                        .score(timeScore)
+                        .description("等待时间超过" + hoursSinceApplication + "小时")
+                        .build());
+            }
+        }
+
+        if (request.getReason() != null) {
+            String lowerReason = request.getReason().toLowerCase();
+            if (lowerReason.contains("紧急") || lowerReason.contains("urgent")
+                    || lowerReason.contains("急诊") || lowerReason.contains("emergency")) {
+                details.add(PriorityScoreDetail.builder()
+                        .factor("DOCTOR_REMARK")
+                        .score(10)
+                        .description("医生备注: " + request.getReason())
+                        .build());
+            }
+        }
+
+        return details;
     }
 
     private PriorityLevel determinePriorityLevel(int score) {
@@ -318,34 +526,33 @@ public class TransferService {
     }
 
     private int recalculateScore(TransferApplication application, PatientStatus newStatus) {
-        int score = 0;
-        switch (newStatus) {
-            case CRITICAL: score += 40; break;
-            case POSTOPERATIVE: score += 20; break;
-            case STABLE: score += 10; break;
-            case DISCHARGING: score += 5; break;
-            default: break;
-        }
-        switch (application.getNursingLevel()) {
-            case SPECIAL: score += 30; break;
-            case LEVEL1: score += 25; break;
-            case LEVEL2: score += 15; break;
-            case LEVEL3: score += 5; break;
-        }
-        if (application.getIsolationRequirement() != IsolationType.NONE) {
-            score += 15;
-        }
-        if (application.getRequiredBedType() == BedType.ICU
-                || application.getRequiredBedType() == BedType.RESCUE) {
-            score += 20;
-        }
-        return score;
+        TransferRequest tempRequest = TransferRequest.builder()
+                .nursingLevel(application.getNursingLevel())
+                .isolationRequirement(application.getIsolationRequirement())
+                .requiredBedType(application.getRequiredBedType())
+                .appointmentTime(application.getApplicationTime())
+                .reason(application.getReason())
+                .build();
+
+        Patient tempPatient = Patient.builder()
+                .status(newStatus)
+                .build();
+
+        return calculatePriorityScore(tempPatient, tempRequest);
     }
 
     @Transactional
     public void retryPendingTransfers() {
         List<TransferApplication> pendingApplications = transferRepository
-                .findByStatusIn(List.of(TransferStatus.NO_BED_AVAILABLE, TransferStatus.ISOLATION_REQUIRED));
+                .findByStatusIn(List.of(TransferStatus.NO_BED_AVAILABLE, TransferStatus.ISOLATION_REQUIRED))
+                .stream()
+                .sorted((a, b) -> {
+                    int scoreCompare = Integer.compare(b.getPriorityScore(), a.getPriorityScore());
+                    if (scoreCompare != 0) return scoreCompare;
+                    return a.getApplicationTime().compareTo(b.getApplicationTime());
+                })
+                .collect(Collectors.toList());
+
         for (TransferApplication app : pendingApplications) {
             attemptAssignBed(app);
         }

@@ -86,6 +86,20 @@ public class BedController {
         return ApiResponse.success(bedService.countAllAvailableBeds());
     }
 
+    @GetMapping("/available/ward/{wardNumber}")
+    public ApiResponse<List<BedQueryResponse>> getAvailableBedsByWard(
+            @RequestParam String department,
+            @PathVariable String wardNumber) {
+        return ApiResponse.success(bedService.getAvailableBedsByWard(department, wardNumber));
+    }
+
+    @GetMapping("/count/available/ward/{wardNumber}")
+    public ApiResponse<Long> countAvailableBedsByWard(
+            @RequestParam String department,
+            @PathVariable String wardNumber) {
+        return ApiResponse.success(bedService.countAvailableBedsByWard(department, wardNumber));
+    }
+
     private BedQueryResponse toQueryResponse(Bed bed) {
         return BedQueryResponse.builder()
                 .id(bed.getId())
@@ -95,6 +109,8 @@ public class BedController {
                 .isolationType(bed.getIsolationType())
                 .occupied(bed.getOccupied())
                 .occupiedByAdmissionNumber(bed.getOccupiedByAdmissionNumber())
+                .roomNumber(bed.getRoomNumber())
+                .wardNumber(bed.getWardNumber())
                 .build();
     }
 }

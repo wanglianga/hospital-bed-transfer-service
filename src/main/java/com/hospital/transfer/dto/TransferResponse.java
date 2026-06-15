@@ -7,6 +7,7 @@ import com.hospital.transfer.enums.PriorityLevel;
 import com.hospital.transfer.enums.TransferStatus;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 public class TransferResponse {
 
@@ -30,6 +31,10 @@ public class TransferResponse {
     private LocalDateTime occupationDeadline;
     private Integer priorityScore;
     private String remark;
+    private IsolationRestriction isolationRestriction;
+    private List<PriorityScoreDetail> priorityScoreDetails;
+    private Integer queuePosition;
+    private Integer totalWaiting;
 
     public TransferResponse() {
     }
@@ -39,7 +44,9 @@ public class TransferResponse {
                             PriorityLevel priorityLevel, TransferStatus status, String diagnosis, String reason,
                             String applicantDoctorId, LocalDateTime applicationTime, Long assignedBedId,
                             String assignedBedNumber, LocalDateTime assignedTime, LocalDateTime appointmentTime,
-                            LocalDateTime occupationDeadline, Integer priorityScore, String remark) {
+                            LocalDateTime occupationDeadline, Integer priorityScore, String remark,
+                            IsolationRestriction isolationRestriction, List<PriorityScoreDetail> priorityScoreDetails,
+                            Integer queuePosition, Integer totalWaiting) {
         this.id = id;
         this.patientAdmissionNumber = patientAdmissionNumber;
         this.currentDepartment = currentDepartment;
@@ -60,6 +67,10 @@ public class TransferResponse {
         this.occupationDeadline = occupationDeadline;
         this.priorityScore = priorityScore;
         this.remark = remark;
+        this.isolationRestriction = isolationRestriction;
+        this.priorityScoreDetails = priorityScoreDetails;
+        this.queuePosition = queuePosition;
+        this.totalWaiting = totalWaiting;
     }
 
     public Long getId() {
@@ -222,6 +233,38 @@ public class TransferResponse {
         this.remark = remark;
     }
 
+    public IsolationRestriction getIsolationRestriction() {
+        return isolationRestriction;
+    }
+
+    public void setIsolationRestriction(IsolationRestriction isolationRestriction) {
+        this.isolationRestriction = isolationRestriction;
+    }
+
+    public List<PriorityScoreDetail> getPriorityScoreDetails() {
+        return priorityScoreDetails;
+    }
+
+    public void setPriorityScoreDetails(List<PriorityScoreDetail> priorityScoreDetails) {
+        this.priorityScoreDetails = priorityScoreDetails;
+    }
+
+    public Integer getQueuePosition() {
+        return queuePosition;
+    }
+
+    public void setQueuePosition(Integer queuePosition) {
+        this.queuePosition = queuePosition;
+    }
+
+    public Integer getTotalWaiting() {
+        return totalWaiting;
+    }
+
+    public void setTotalWaiting(Integer totalWaiting) {
+        this.totalWaiting = totalWaiting;
+    }
+
     public static Builder builder() {
         return new Builder();
     }
@@ -248,6 +291,10 @@ public class TransferResponse {
         private LocalDateTime occupationDeadline;
         private Integer priorityScore;
         private String remark;
+        private IsolationRestriction isolationRestriction;
+        private List<PriorityScoreDetail> priorityScoreDetails;
+        private Integer queuePosition;
+        private Integer totalWaiting;
 
         Builder() {
         }
@@ -352,11 +399,32 @@ public class TransferResponse {
             return this;
         }
 
+        public Builder isolationRestriction(IsolationRestriction isolationRestriction) {
+            this.isolationRestriction = isolationRestriction;
+            return this;
+        }
+
+        public Builder priorityScoreDetails(List<PriorityScoreDetail> priorityScoreDetails) {
+            this.priorityScoreDetails = priorityScoreDetails;
+            return this;
+        }
+
+        public Builder queuePosition(Integer queuePosition) {
+            this.queuePosition = queuePosition;
+            return this;
+        }
+
+        public Builder totalWaiting(Integer totalWaiting) {
+            this.totalWaiting = totalWaiting;
+            return this;
+        }
+
         public TransferResponse build() {
             return new TransferResponse(id, patientAdmissionNumber, currentDepartment, targetDepartment,
                     requiredBedType, isolationRequirement, nursingLevel, priorityLevel, status, diagnosis, reason,
                     applicantDoctorId, applicationTime, assignedBedId, assignedBedNumber, assignedTime,
-                    appointmentTime, occupationDeadline, priorityScore, remark);
+                    appointmentTime, occupationDeadline, priorityScore, remark,
+                    isolationRestriction, priorityScoreDetails, queuePosition, totalWaiting);
         }
     }
 }

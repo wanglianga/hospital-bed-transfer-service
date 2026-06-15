@@ -40,6 +40,10 @@ public class Bed {
     @Column(nullable = false)
     private Boolean enabled = true;
 
+    private String roomNumber;
+
+    private String wardNumber;
+
     private LocalDateTime updateTime;
 
     public Bed() {
@@ -48,7 +52,7 @@ public class Bed {
     public Bed(Long id, String bedNumber, String department, BedType bedType,
                IsolationType isolationType, Boolean occupied, String occupiedByAdmissionNumber,
                Long currentTransferApplicationId, LocalDateTime occupiedTime,
-               Boolean enabled, LocalDateTime updateTime) {
+               Boolean enabled, String roomNumber, String wardNumber, LocalDateTime updateTime) {
         this.id = id;
         this.bedNumber = bedNumber;
         this.department = department;
@@ -59,6 +63,8 @@ public class Bed {
         this.currentTransferApplicationId = currentTransferApplicationId;
         this.occupiedTime = occupiedTime;
         this.enabled = enabled;
+        this.roomNumber = roomNumber;
+        this.wardNumber = wardNumber;
         this.updateTime = updateTime;
     }
 
@@ -92,6 +98,12 @@ public class Bed {
     public Boolean getEnabled() { return enabled; }
     public void setEnabled(Boolean enabled) { this.enabled = enabled; }
 
+    public String getRoomNumber() { return roomNumber; }
+    public void setRoomNumber(String roomNumber) { this.roomNumber = roomNumber; }
+
+    public String getWardNumber() { return wardNumber; }
+    public void setWardNumber(String wardNumber) { this.wardNumber = wardNumber; }
+
     public LocalDateTime getUpdateTime() { return updateTime; }
     public void setUpdateTime(LocalDateTime updateTime) { this.updateTime = updateTime; }
 
@@ -120,6 +132,8 @@ public class Bed {
         private Long currentTransferApplicationId;
         private LocalDateTime occupiedTime;
         private Boolean enabled = true;
+        private String roomNumber;
+        private String wardNumber;
         private LocalDateTime updateTime;
 
         public Builder id(Long id) { this.id = id; return this; }
@@ -132,11 +146,14 @@ public class Bed {
         public Builder currentTransferApplicationId(Long currentTransferApplicationId) { this.currentTransferApplicationId = currentTransferApplicationId; return this; }
         public Builder occupiedTime(LocalDateTime occupiedTime) { this.occupiedTime = occupiedTime; return this; }
         public Builder enabled(Boolean enabled) { this.enabled = enabled; return this; }
+        public Builder roomNumber(String roomNumber) { this.roomNumber = roomNumber; return this; }
+        public Builder wardNumber(String wardNumber) { this.wardNumber = wardNumber; return this; }
         public Builder updateTime(LocalDateTime updateTime) { this.updateTime = updateTime; return this; }
 
         public Bed build() {
             return new Bed(id, bedNumber, department, bedType, isolationType, occupied,
-                    occupiedByAdmissionNumber, currentTransferApplicationId, occupiedTime, enabled, updateTime);
+                    occupiedByAdmissionNumber, currentTransferApplicationId, occupiedTime,
+                    enabled, roomNumber, wardNumber, updateTime);
         }
     }
 }

@@ -1,6 +1,7 @@
 package com.hospital.transfer.service;
 
 import com.hospital.transfer.dto.BedQueryResponse;
+import com.hospital.transfer.dto.IsolationRestriction;
 import com.hospital.transfer.entity.Bed;
 import com.hospital.transfer.enums.BedType;
 import com.hospital.transfer.enums.IsolationType;
@@ -103,6 +104,17 @@ public class BedService {
         return bedRepository.countByIsolationTypeAndOccupiedFalseAndEnabledTrue(isolationType);
     }
 
+    public List<BedQueryResponse> getAvailableBedsByWard(String department, String wardNumber) {
+        return bedRepository.findByDepartmentAndWardNumberAndOccupiedFalseAndEnabledTrue(department, wardNumber)
+                .stream()
+                .map(this::toQueryResponse)
+                .collect(Collectors.toList());
+    }
+
+    public long countAvailableBedsByWard(String department, String wardNumber) {
+        return bedRepository.countByDepartmentAndWardNumberAndOccupiedFalseAndEnabledTrue(department, wardNumber);
+    }
+
     @Transactional
     public Bed occupyBed(Long bedId, String admissionNumber, Long transferApplicationId) {
         Bed bed = bedRepository.findById(bedId)
@@ -139,17 +151,148 @@ public class BedService {
         return bed;
     }
 
+    public IsolationRestriction checkIsolationRestriction(String department, BedType bedType, IsolationType isolationType,
+                                                          String diagnosis, String doctorRemark) {
+        if (isolationType == IsolationType.NONE) {
+            return null;
+        }
+
+        int infectionRiskLevel = assessInfectionRisk(isolationType, diagnosis);
+        boolean wardSuitable = checkWardCondition(department, isolationType);
+
+        if (!wardSuitable) {
+            return IsolationRestriction.builder()
+                    .restrictionType("WARD_UNSUITABLE")
+                    .message("目标科室 " + department + " 不具备收治 " + isolationType + " 隔离患者的条件")
+                    .requiredIsolationType(isolationType)
+                    .detail("感染风险等级: " + infectionRiskLevel + "，请转至具备相应隔离条件的科室")
+                    .build();
+        }
+
+        List<Bed> isolationBeds = bedRepository
+                .findByDepartmentAndIsolationTypeAndOccupiedFalseAndEnabledTrue(department, isolationType);
+
+        if (isolationBeds.isEmpty()) {
+            return IsolationRestriction.builder()
+                    .restrictionType("NO_ISOLATION_BED")
+                    .message("目标科室 " + department + " 暂无可用的 " + isolationType + " 隔离床位")
+                    .requiredIsolationType(isolationType)
+                    .detail("感染风险等级: " + infectionRiskLevel + "，需等待隔离床位释放或协调其他科室")
+                    .build();
+        }
+
+        for (Bed candidateBed : isolationBeds) {
+            IsolationRestriction roomConflict = checkRoommateConflict(candidateBed, isolationType);
+            if (roomConflict != null) {
+                return roomConflict;
+            }
+        }
+
+        return null;
+    }
+
+    private int assessInfectionRisk(IsolationType isolationType, String diagnosis) {
+        int riskLevel = 1;
+        switch (isolationType) {
+            case AIRBORNE:
+                riskLevel = 5;
+                break;
+            case DROPLET:
+                riskLevel = 4;
+                break;
+            case CONTACT:
+                riskLevel = 3;
+                break;
+            case PROTECTIVE:
+                riskLevel = 2;
+                break;
+            default:
+                riskLevel = 1;
+        }
+        if (diagnosis != null) {
+            String lowerDiagnosis = diagnosis.toLowerCase();
+            if (lowerDiagnosis.contains("tb") || lowerDiagnosis.contains("结核")
+                    || lowerDiagnosis.contains("sars") || lowerDiagnosis.contains("covid")) {
+                riskLevel = Math.max(riskLevel, 5);
+            } else if (lowerDiagnosis.contains("flu") || lowerDiagnosis.contains("流感")
+                    || lowerDiagnosis.contains("meningitis") || lowerDiagnosis.contains("脑膜炎")) {
+                riskLevel = Math.max(riskLevel, 4);
+            } else if (lowerDiagnosis.contains("mdr") || lowerDiagnosis.contains("耐药")
+                    || lowerDiagnosis.contains("mrsa") || lowerDiagnosis.contains("vre")) {
+                riskLevel = Math.max(riskLevel, 4);
+            }
+        }
+        return riskLevel;
+    }
+
+    private boolean checkWardCondition(String department, IsolationType isolationType) {
+        if (isolationType == IsolationType.NONE) {
+            return true;
+        }
+        List<Bed> allIsolationBeds = bedRepository.findByDepartment(department).stream()
+                .filter(b -> b.getIsolationType() != IsolationType.NONE)
+                .collect(Collectors.toList());
+
+        if (allIsolationBeds.isEmpty()) {
+            return false;
+        }
+
+        if (isolationType == IsolationType.AIRBORNE) {
+            return allIsolationBeds.stream()
+                    .anyMatch(b -> b.getIsolationType() == IsolationType.AIRBORNE);
+        }
+
+        return true;
+    }
+
+    private IsolationRestriction checkRoommateConflict(Bed candidateBed, IsolationType patientIsolationType) {
+        if (candidateBed.getRoomNumber() == null) {
+            return null;
+        }
+        List<Bed> occupiedBedsInRoom = bedRepository
+                .findByDepartmentAndRoomNumberAndOccupiedTrue(candidateBed.getDepartment(), candidateBed.getRoomNumber());
+        for (Bed occupiedBed : occupiedBedsInRoom) {
+            IsolationType existingIsolation = occupiedBed.getIsolationType();
+            if (existingIsolation != IsolationType.NONE && existingIsolation != patientIsolationType) {
+                return IsolationRestriction.builder()
+                        .restrictionType("ROOM_CONFLICT")
+                        .message("房间 " + candidateBed.getRoomNumber() + " 存在不同隔离类型的患者，禁止混住")
+                        .requiredIsolationType(patientIsolationType)
+                        .detail("现有患者隔离类型: " + existingIsolation + "，申请患者隔离类型: " + patientIsolationType)
+                        .build();
+            }
+            if (existingIsolation == IsolationType.NONE && patientIsolationType != IsolationType.NONE) {
+                return IsolationRestriction.builder()
+                        .restrictionType("ROOM_CONFLICT")
+                        .message("房间 " + candidateBed.getRoomNumber() + " 存在非隔离患者，隔离患者禁止入住")
+                        .requiredIsolationType(patientIsolationType)
+                        .detail("非隔离患者住院号: " + occupiedBed.getOccupiedByAdmissionNumber())
+                        .build();
+            }
+        }
+        return null;
+    }
+
     public Bed findBestMatchBed(String department, BedType bedType, IsolationType isolationType) {
         List<Bed> candidates;
         if (isolationType != IsolationType.NONE) {
             candidates = bedRepository.findByDepartmentAndIsolationTypeAndOccupiedFalseAndEnabledTrue(department, isolationType);
             if (!candidates.isEmpty()) {
                 for (Bed bed : candidates) {
+                    IsolationRestriction conflict = checkRoommateConflict(bed, isolationType);
+                    if (conflict != null) {
+                        continue;
+                    }
                     if (bed.getBedType() == bedType) {
                         return bed;
                     }
                 }
-                return candidates.get(0);
+                for (Bed bed : candidates) {
+                    IsolationRestriction conflict = checkRoommateConflict(bed, isolationType);
+                    if (conflict == null) {
+                        return bed;
+                    }
+                }
             }
             log.warn("目标科室 {} 未找到匹配隔离类型 {} 的床位", department, isolationType);
             return null;
@@ -158,7 +301,10 @@ public class BedService {
             if (!candidates.isEmpty()) {
                 for (Bed bed : candidates) {
                     if (bed.getIsolationType() == IsolationType.NONE) {
-                        return bed;
+                        IsolationRestriction conflict = checkRoommateConflict(bed, isolationType);
+                        if (conflict == null) {
+                            return bed;
+                        }
                     }
                 }
             }
@@ -166,10 +312,13 @@ public class BedService {
         candidates = bedRepository.findByDepartmentAndOccupiedFalseAndEnabledTrue(department);
         for (Bed bed : candidates) {
             if (bed.getIsolationType() == IsolationType.NONE) {
-                return bed;
+                IsolationRestriction conflict = checkRoommateConflict(bed, isolationType);
+                if (conflict == null) {
+                    return bed;
+                }
             }
         }
-        return candidates.isEmpty() ? null : null;
+        return null;
     }
 
     private BedQueryResponse toQueryResponse(Bed bed) {
@@ -181,6 +330,8 @@ public class BedService {
                 .isolationType(bed.getIsolationType())
                 .occupied(bed.getOccupied())
                 .occupiedByAdmissionNumber(bed.getOccupiedByAdmissionNumber())
+                .roomNumber(bed.getRoomNumber())
+                .wardNumber(bed.getWardNumber())
                 .build();
     }
 }

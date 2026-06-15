@@ -35,4 +35,12 @@ public interface BedRepository extends JpaRepository<Bed, Long> {
     long countByBedTypeAndOccupiedFalseAndEnabledTrue(BedType bedType);
 
     long countByIsolationTypeAndOccupiedFalseAndEnabledTrue(IsolationType isolationType);
+
+    List<Bed> findByDepartmentAndRoomNumberAndOccupiedTrue(String department, String roomNumber);
+
+    List<Bed> findByDepartmentAndWardNumberAndOccupiedTrue(String department, String wardNumber);
+
+    List<Bed> findByDepartmentAndWardNumberAndOccupiedFalseAndEnabledTrue(String department, String wardNumber);
+
+    long countByDepartmentAndWardNumberAndOccupiedFalseAndEnabledTrue(String department, String wardNumber);
 }

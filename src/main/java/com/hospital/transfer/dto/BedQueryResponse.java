@@ -12,12 +12,15 @@ public class BedQueryResponse {
     private IsolationType isolationType;
     private Boolean occupied;
     private String occupiedByAdmissionNumber;
+    private String roomNumber;
+    private String wardNumber;
 
     public BedQueryResponse() {
     }
 
     public BedQueryResponse(Long id, String bedNumber, String department, BedType bedType,
-                            IsolationType isolationType, Boolean occupied, String occupiedByAdmissionNumber) {
+                            IsolationType isolationType, Boolean occupied, String occupiedByAdmissionNumber,
+                            String roomNumber, String wardNumber) {
         this.id = id;
         this.bedNumber = bedNumber;
         this.department = department;
@@ -25,6 +28,8 @@ public class BedQueryResponse {
         this.isolationType = isolationType;
         this.occupied = occupied;
         this.occupiedByAdmissionNumber = occupiedByAdmissionNumber;
+        this.roomNumber = roomNumber;
+        this.wardNumber = wardNumber;
     }
 
     public Long getId() {
@@ -83,6 +88,22 @@ public class BedQueryResponse {
         this.occupiedByAdmissionNumber = occupiedByAdmissionNumber;
     }
 
+    public String getRoomNumber() {
+        return roomNumber;
+    }
+
+    public void setRoomNumber(String roomNumber) {
+        this.roomNumber = roomNumber;
+    }
+
+    public String getWardNumber() {
+        return wardNumber;
+    }
+
+    public void setWardNumber(String wardNumber) {
+        this.wardNumber = wardNumber;
+    }
+
     public static Builder builder() {
         return new Builder();
     }
@@ -96,6 +117,8 @@ public class BedQueryResponse {
         private IsolationType isolationType;
         private Boolean occupied;
         private String occupiedByAdmissionNumber;
+        private String roomNumber;
+        private String wardNumber;
 
         Builder() {
         }
@@ -135,9 +158,19 @@ public class BedQueryResponse {
             return this;
         }
 
+        public Builder roomNumber(String roomNumber) {
+            this.roomNumber = roomNumber;
+            return this;
+        }
+
+        public Builder wardNumber(String wardNumber) {
+            this.wardNumber = wardNumber;
+            return this;
+        }
+
         public BedQueryResponse build() {
             return new BedQueryResponse(id, bedNumber, department, bedType, isolationType, occupied,
-                    occupiedByAdmissionNumber);
+                    occupiedByAdmissionNumber, roomNumber, wardNumber);
         }
     }
 }
